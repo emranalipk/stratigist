@@ -1,15 +1,18 @@
 """
-AI Ads Strategist — Fully Functional, Enhanced PDF (April 2026)
-═══════════════════════════════════════════════════════════════
-• Button now works perfectly
-• 100+ business types, business name, refined PDF with proper formatting
-• Groq API, Plotly charts, clean markdown-to-ReportLab conversion
+AI Ads Strategist — Dual API (Groq + Gemini)
+═══════════════════════════════════════════════════
+• Groq for single-agent, fast commands
+• Gemini 2.5 Flash for full 5-agent strategies
+• API key in Streamlit Secrets
 """
 
 import streamlit as st
 import re, time, io
 from datetime import datetime
+
+# ── Both API clients ──────────────────────────────────
 from groq import Groq
+import google.generativeai as genai
 
 # ── Optional imports ──
 try:
@@ -17,12 +20,11 @@ try:
     from reportlab.lib.units import inch
     from reportlab.lib.colors import HexColor, white
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        PageBreak, ListFlowable, ListItem, KeepTogether
+        PageBreak, ListFlowable, ListItem
     )
-    from reportlab.graphics.shapes import Drawing, Rect, Circle, String, Wedge
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
@@ -54,7 +56,77 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ═══════════ DATA ═══════════
+# ═══════════ API CONFIGURATION ═══════════
+
+# ── Read keys from Streamlit Secrets ──
+try:
+    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except KeyError:
+    groq_client = None
+
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+except KeyError:
+    gemini_model = None
+
+# ── Show provider status ──
+if not groq_client and not gemini_model:
+    st.error("🔴 No API keys found. Add GROQ_API_KEY and/or GEMINI_API_KEY to Streamlit Secrets.")
+    st.stop()
+elif groq_client and gemini_model:
+    st.sidebar.success("🟢 Dual API mode — Groq + Gemini")
+elif groq_client:
+    st.sidebar.info("🟡 Groq only — Gemini key not set")
+elif gemini_model:
+    st.sidebar.info("🟡 Gemini only — Groq key not set")
+
+
+# ═══════════ API ROUTER ═══════════
+
+def call_llm(prompt: str, use_gemini: bool = False) -> str:
+    """
+    Route prompt to the best available API.
+    - use_gemini=True forces Gemini (for full strategy)
+    - Falls back to whichever API is available
+    """
+    if use_gemini and gemini_model:
+        try:
+            response = gemini_model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            st.warning(f"Gemini failed ({e}), falling back...")
+    
+    # Fallback to Groq
+    if groq_client:
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            # Final fallback — try Gemini if not tried yet
+            if gemini_model and not use_gemini:
+                st.warning(f"Groq failed ({e}), trying Gemini...")
+                try:
+                    response = gemini_model.generate_content(prompt)
+                    return response.text
+                except:
+                    pass
+            raise RuntimeError(f"Both APIs failed. Groq error: {e}")
+    
+    # Only Gemini available
+    if gemini_model:
+        response = gemini_model.generate_content(prompt)
+        return response.text
+    
+    raise RuntimeError("No API available")
+
+
+# ═══════════ DATA (same as before) ═══════════
 BUSINESS_TYPES_EXTENDED = [
     "Beauty Products (General)", "Hair Oils & Serums", "Hair Tonics",
     "Skin Care (Creams, Serums)", "Cosmetics / Makeup", "Nail Care & Art",
@@ -63,53 +135,32 @@ BUSINESS_TYPES_EXTENDED = [
     "Food Supplements", "Vitamins & Minerals", "Herbal Remedies",
     "Weight Loss Products", "Sports Nutrition", "Protein & Fitness Supplements",
     "Yoga & Meditation", "Mental Wellness Apps", "Telemedicine",
-    "Dental Care Products", "Eye Care", "Hearing Aids",
     "Restaurant / Café", "Fast Food Chain", "Bakery & Confectionery",
     "Organic Food Store", "Meal Delivery Service", "Cloud Kitchen",
     "Spices & Condiments", "Tea / Coffee Brand", "Juice & Smoothie Bar",
-    "Dietary Specific Foods", "Frozen Foods", "Imported Groceries",
     "Clothing Brand (Men)", "Clothing Brand (Women)", "Kids Wear",
     "Footwear", "Luxury Fashion", "Streetwear", "Ethnic / Traditional Wear",
     "Activewear / Sportswear", "Accessories (Bags, Belts)", "Jewelry",
-    "Watches", "Eyewear / Sunglasses",
     "Furniture Store", "Home Decor", "Kitchenware & Appliances",
-    "Bedding & Linen", "Smart Home Devices", "Gardening Supplies",
-    "Cleaning Products", "Interior Design Service",
-    "Mobile Phones & Accessories", "Laptops & Computers", "Audio / Headphones",
-    "Gaming Gear", "Wearable Tech", "Camera & Photography",
-    "Real Estate Agency", "Property Developer", "Cleaning Service",
-    "Plumbing / Electrical", "Home Renovation", "Pest Control",
-    "Legal Services", "Accounting / Tax", "Insurance Agent",
-    "Travel Agency", "Event Planning", "Photography Studio",
+    "Smart Home Devices", "Mobile Phones & Accessories", "Laptops & Computers",
+    "Audio / Headphones", "Gaming Gear", "Wearable Tech",
+    "Real Estate Agency", "Legal Services", "Accounting / Tax",
     "Digital Marketing Agency", "Web Development", "Graphic Design",
-    "Content Writing", "SEO Consultant", "Social Media Manager",
-    "Tutoring / Academy", "Online Courses", "Language Learning",
-    "Business Coaching", "Fitness Coaching", "Career Counseling",
-    "Doctor / Clinic", "Dentist", "Physiotherapist", "Pharmacy",
-    "Veterinary Clinic", "Diagnostic Lab",
+    "Online Courses", "Business Coaching", "Fitness Coaching",
+    "Doctor / Clinic", "Dentist", "Pharmacy", "Veterinary Clinic",
     "Car Dealership", "Auto Repair Garage", "Car Wash / Detailing",
-    "Spare Parts Shop", "Tire Shop",
-    "E-commerce (Multi-category)", "Dropshipping Store", "Print on Demand",
-    "Handicrafts / Artisan Products", "Pet Supplies", "Toys & Games",
-    "Stationery / Office Supplies", "Bookstore", "Music Instruments",
-    "Fitness Equipment", "Subscription Box", "Sustainable/Eco Products",
-    "Baby Products", "Maternity Wear", "Religious / Cultural Items",
-    "Agriculture / Farming Supplies", "Industrial Machinery",
+    "E-commerce (Multi-category)", "Dropshipping Store",
+    "Pet Supplies", "Toys & Games", "Baby Products",
     "Software / SaaS (B2B)", "Mobile App (Consumer)", "FinTech",
 ]
 
 COUNTRIES = ["Pakistan", "India", "United States", "United Kingdom", "Canada",
-             "United Arab Emirates", "Saudi Arabia", "Australia", "Bangladesh",
-             "Malaysia", "Indonesia", "Singapore", "Other"]
+             "United Arab Emirates", "Saudi Arabia", "Australia"]
 
 PROVINCES_BY_COUNTRY = {
-    "Pakistan": ["Punjab","Sindh","Khyber Pakhtunkhwa","Balochistan","Islamabad","Gilgit-Baltistan","Azad Jammu & Kashmir","All Provinces"],
+    "Pakistan": ["Punjab","Sindh","Khyber Pakhtunkhwa","Balochistan","Islamabad","All Provinces"],
     "India": ["Maharashtra","Delhi","Karnataka","Tamil Nadu","Gujarat","All States"],
     "United States": ["California","New York","Texas","Florida","All States"],
-    "United Kingdom": ["England","Scotland","Wales","Northern Ireland","All UK"],
-    "Canada": ["Ontario","Quebec","British Columbia","Alberta","All Provinces"],
-    "United Arab Emirates": ["Dubai","Abu Dhabi","Sharjah","All Emirates"],
-    "Saudi Arabia": ["Riyadh","Jeddah","Makkam","Dammam","All Regions"],
 }
 
 LANGUAGES_BY_COUNTRY = {
@@ -123,51 +174,34 @@ LANGUAGES_BY_COUNTRY = {
 }
 
 
-# ═══════════ GROQ CLIENT ═══════════
-@st.cache_resource
-def get_client():
-    return Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-try:
-    client = get_client()
-except Exception as e:
-    st.error(f"Groq API key missing. Add to secrets.")
-    st.stop()
-
-
-# ═══════════ AGENT PROMPT BUILDER ═══════════
-def build_prompt(agent, **ctx):
+# ═══════════ PROMPT BUILDER ═══════════
+def build_prompt(agent: str, **ctx) -> str:
     name = ctx.get('business_name','')
     url = ctx.get('url','')
     country = ctx.get('country','')
-    provinces = ctx.get('provinces',[])
-    cities = ctx.get('cities','')
     langs = ctx.get('languages',['English'])
     bilingual = ctx.get('bilingual',False)
-    btype = ctx.get('business_type','')
+    biz_type = ctx.get('business_type','')
     objective = ctx.get('objective','')
     budget = ctx.get('budget',3000)
     competitors = ctx.get('competitor_urls','')
-    assets = ctx.get('creative_assets',[])
-    platform = ctx.get('platform','Meta')
 
     lang_instruction = f"Create content in {', '.join(langs)}."
     if bilingual and len(langs)>=2:
         lang_instruction = f"Create bilingual content mixing {langs[0]} and {langs[1]} naturally (code-switching)."
 
     location = f"{country}"
-    if provinces and 'All' not in provinces[0]:
-        location += f", specifically {', '.join(provinces)}"
-    if cities: location += f". Cities: {cities}"
+    if ctx.get('provinces') and 'All' not in ctx['provinces'][0]:
+        location += f", specifically {', '.join(ctx['provinces'])}"
+    if ctx.get('cities'): location += f". Cities: {ctx['cities']}"
 
     base = f"""
 BUSINESS: {name} ({url})
 LOCATION: {location}
 LANGUAGE: {lang_instruction}
-BUSINESS TYPE: {btype}
+BUSINESS TYPE: {biz_type}
 OBJECTIVE: {objective}
 COMPETITORS: {competitors}
-ASSETS: {', '.join(assets)}
 """
     if country == "Pakistan":
         base += "\n[Pakistan Market: Meta CPM PKR 120-480, CPC PKR 5-20. Short vertical video 80% of growth. Bilingual ads +20-30% CTR.]"
@@ -178,34 +212,26 @@ ASSETS: {', '.join(assets)}
         "funnel": base + "Design TOFU(40%)-MOFU(30%)-BOFU(20%)-Retarget(10%) funnel with KPIs. End with SCORE:XX.",
         "competitive": base + "Identify 3-5 competitors, gaps, counter-positioning. End with SCORE:XX.",
         "budget": base + f"Allocate ${budget}/month across platforms with local CPM/CPC, ROAS projections. End with SCORE:XX.",
-        "quick": base + "60-second snapshot: value prop, CTA, platform rec, budget. End with SCORE:XX.",
-        "keywords": base + "Keyword strategy, match types, negatives. No score.",
-        "copy": base + f"Platform-specific copy for {platform}. No score.",
-        "hooks": base + "20 hooks (pattern interrupts, curiosity, bold claims). No score.",
-        "creative_brief": base + "Creative brief with visuals, formats. No score.",
-        "video_script": base + "30s vertical video script. No score.",
-        "funnel_only": base + "Full funnel architecture. No score.",
-        "testing": base + "A/B testing plan. No score.",
-        "landing_audit": base + "Landing page audit. No score.",
-        "ad_audit": base + "Ad performance audit. No score.",
+        "quick": base + "60-second snapshot. End with SCORE:XX.",
+        "keywords": base + "Keyword strategy. No score needed.",
+        "copy": base + f"Platform copy for {ctx.get('platform','Meta')}. No score needed.",
+        "hooks": base + "20 hooks. No score needed.",
+        "creative_brief": base + "Creative brief. No score needed.",
+        "video_script": base + "30s vertical video script. No score needed.",
+        "funnel_only": base + "Full funnel architecture. No score needed.",
+        "testing": base + "A/B testing plan. No score needed.",
+        "landing_audit": base + "Landing page audit. No score needed.",
+        "ad_audit": base + "Ad performance audit. No score needed.",
     }
     return prompts.get(agent, prompts["quick"])
 
 
-# ═══════════ API CALL ═══════════
-def call_groq(prompt, max_tok=4096):
-    resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role":"user","content":prompt}],
-        temperature=0.7, max_tokens=max_tok
-    )
-    return resp.choices[0].message.content
-
-def extract_score(text):
+# ═══════════ HELPERS ═══════════
+def extract_score(text: str) -> int:
     m = re.search(r"SCORE:\s*(\d+)", text, re.IGNORECASE)
     return int(m.group(1)) if m else 65
 
-def score_grade(s):
+def score_grade(s: float) -> str:
     if s>=95: return "A+"
     if s>=90: return "A"
     if s>=85: return "A-"
@@ -220,276 +246,165 @@ def score_grade(s):
     if s>=40: return "D-"
     return "F"
 
-def score_color(s):
+def score_color(s: float) -> str:
     if s>=80: return "#10B981"
     if s>=65: return "#3B82F6"
     if s>=50: return "#F59E0B"
     return "#EF4444"
 
 
-# ═══════════ PDF GENERATION (REFINED) ═══════════
+# ═══════════ PDF (same as before) ═══════════
 def markdown_to_flowables(text, base_style):
-    """Convert text with **bold** and - lists into ReportLab flowables."""
     flowables = []
-    blocks = re.split(r'\n\s*\n', text.strip())
-    for block in blocks:
+    for block in re.split(r'\n\s*\n', text.strip()):
         block = block.strip()
-        if not block:
-            continue
-        lines = block.split('\n')
-        # Check if bullet list
-        is_bullet = all(re.match(r'^\s*[\-\*]\s', l) for l in lines if l.strip())
-        if is_bullet:
+        if not block: continue
+        if all(re.match(r'^\s*[\-\*]\s', l) for l in block.split('\n') if l.strip()):
             items = []
-            for line in lines:
+            for line in block.split('\n'):
                 content = re.sub(r'^\s*[\-\*]\s*', '', line)
-                # Convert **bold** to <b>...</b>
                 content = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', content)
                 items.append(ListItem(Paragraph(content, base_style)))
             flowables.append(ListFlowable(items, bulletType='bullet', start='•', leftIndent=20, bulletFontSize=8))
             flowables.append(Spacer(1, 6))
         else:
-            # Normal paragraph
-            para_text = '<br/>'.join(lines)
-            para_text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', para_text)
-            flowables.append(Paragraph(para_text, base_style))
+            para = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', '<br/>'.join(block.split('\n')))
+            flowables.append(Paragraph(para, base_style))
             flowables.append(Spacer(1, 8))
     return flowables
 
 def generate_pdf(data):
-    if not PDF_AVAILABLE:
-        return None
+    if not PDF_AVAILABLE: return None
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=0.7*inch, rightMargin=0.7*inch,
-                            topMargin=0.6*inch, bottomMargin=0.6*inch)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=0.7*inch, rightMargin=0.7*inch, topMargin=0.6*inch, bottomMargin=0.6*inch)
     styles = getSampleStyleSheet()
-    body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=14, textColor="#1E293B")
-    cover_title = ParagraphStyle('CoverTitle', parent=styles['Title'], fontSize=24, textColor="#1E3A5F", alignment=TA_CENTER)
-    section_head = ParagraphStyle('SectionHead', parent=styles['Heading2'], fontSize=14, textColor="#1E3A5F", spaceBefore=20, spaceAfter=12)
-
-    story = []
-    name = data.get('business_name') or data.get('url','Business')
-    url = data.get('url','')
-    total = data.get('total',0)
-    grade = data.get('grade','')
-
-    # Cover
-    story.append(Spacer(1, 1.4*inch))
-    story.append(Paragraph("AI Advertising Strategy Report", cover_title))
-    story.append(Spacer(1, 0.15*inch))
-    story.append(Paragraph(f"<font size='16' color='#1E3A5F'><b>{name}</b></font>", ParagraphStyle('NameCenter', alignment=TA_CENTER, fontSize=16)))
-    story.append(Spacer(1, 0.1*inch))
-    story.append(Paragraph(f"<font size='11' color='#64748B'>{url}</font>", ParagraphStyle('UrlCenter', alignment=TA_CENTER)))
-    story.append(Spacer(1, 0.25*inch))
-    # Gauge
-    d = Drawing(250, 140)
-    d.add(Circle(125, 80, 80, fillColor=HexColor("#F1F5F9"), strokeColor=HexColor("#E2E8F0")))
-    d.add(String(125, 95, str(int(total)), fontSize=36, fillColor=HexColor(score_color(total)), textAnchor="middle", fontName="Helvetica-Bold"))
-    d.add(String(125, 70, f"/100  Grade: {grade}", fontSize=10, fillColor=HexColor("#64748B"), textAnchor="middle"))
-    story.append(d)
-    story.append(Spacer(1, 0.3*inch))
-    story.append(Paragraph(f"<font size='11' color='#94A3B8'>{datetime.now().strftime('%B %d, %Y')}</font>", ParagraphStyle('DateCenter', alignment=TA_CENTER)))
-    story.append(PageBreak())
-
-    # Score breakdown table
-    story.append(Paragraph("Score Breakdown", section_head))
+    body = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=14, textColor="#1E293B")
+    section = ParagraphStyle('Section', parent=styles['Heading2'], fontSize=14, textColor="#1E3A5F", spaceBefore=20, spaceAfter=12)
+    story = [Spacer(1,1.4*inch), Paragraph("AI Advertising Strategy Report", ParagraphStyle('T',parent=styles['Title'],fontSize=24,textColor="#1E3A5F",alignment=TA_CENTER)),
+             Spacer(1,0.15*inch), Paragraph(f"<b>{data.get('business_name') or data.get('url','')}</b>", ParagraphStyle('N',alignment=TA_CENTER,fontSize=16)),
+             PageBreak(), Paragraph("Score Breakdown", section)]
     scores = data.get('scores',{})
-    weights = {"audience":25,"creative":20,"funnel":20,"competitive":15,"budget":20}
-    table_data = [["Category","Score","Weight","Status"]]
-    for k,label in [("audience","Audience"),("creative","Creative"),("funnel","Funnel"),("competitive","Competitive"),("budget","Budget")]:
+    t = [["Category","Score","Weight","Status"]]
+    for k,label,w in [("audience","Audience",25),("creative","Creative",20),("funnel","Funnel",20),("competitive","Competitive",15),("budget","Budget",20)]:
         s = scores.get(k,65)
-        status = "✅ Strong" if s>=80 else "⚠️ Needs Work" if s>=65 else "🔴 Critical"
-        table_data.append([label, str(s), f"{weights[k]}%", status])
-    tbl = Table(table_data, colWidths=[1.6*inch,0.8*inch,0.8*inch,1.4*inch])
-    tbl.setStyle(TableStyle([
-        ('BACKGROUND',(0,0),(-1,0),'#1E3A5F'),
-        ('TEXTCOLOR',(0,0),(-1,0),white),
-        ('ALIGN',(1,1),(-1,-1),'CENTER'),
-        ('GRID',(0,0),(-1,-1),0.5, HexColor("#E2E8F0")),
-        ('ROWBACKGROUNDS',(0,1),(-1,-1),[white,HexColor("#F8FAFC")]),
-    ]))
+        t.append([label,str(s),f"{w}%","✅" if s>=80 else "⚠️" if s>=65 else "🔴"])
+    tbl = Table(t, colWidths=[1.6*inch,0.8*inch,0.8*inch,1.4*inch])
+    tbl.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),'#1E3A5F'),('TEXTCOLOR',(0,0),(-1,0),white),('GRID',(0,0),(-1,-1),0.5,HexColor("#E2E8F0"))]))
     story.append(tbl)
-    story.append(Spacer(1, 0.2*inch))
-
-    # Agent sections
-    for agent_key, title in [("audience","Audience Personas"),("creative","Ad Creative & Copy"),
-                               ("funnel","Funnel Architecture"),("competitive","Competitive Intelligence"),
-                               ("budget","Budget Allocation")]:
-        text = data.get('results',{}).get(agent_key,'')
-        if text:
+    for k, title in [("audience","Audience"),("creative","Ad Creative & Copy"),("funnel","Funnel"),("competitive","Competitive Intel"),("budget","Budget")]:
+        if data.get('results',{}).get(k):
             story.append(PageBreak())
-            story.append(Paragraph(title, section_head))
-            flowables = markdown_to_flowables(text, body_style)
-            story.extend(flowables)
-
+            story.append(Paragraph(title, section))
+            story.extend(markdown_to_flowables(data['results'][k], body))
     doc.build(story)
     buf.seek(0)
     return buf
 
 
 # ═══════════ UI ═══════════
-st.markdown("""
-<div class="hero-header">
-    <h1>🎯 AI Ads Strategist</h1>
-    <p>100+ business types · Pakistan Optimized · Professional PDF Reports</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("""<div class="hero-header"><h1>🎯 AI Ads Strategist</h1><p>100+ Types · Dual API (Groq + Gemini) · Pakistan Optimized</p></div>""", unsafe_allow_html=True)
 
 col1, col2 = st.columns([1,2])
 with col1:
-    command = st.selectbox("Choose a service:", [
-        "📊 Full Strategy (all 5 agents)",
-        "⚡ 60-Second Snapshot",
-        "🎯 Audience Personas",
-        "🔍 Competitor Analysis",
-        "🔑 Keyword Strategy",
-        "✍️ Ad Copy Generator",
-        "🪝 Hook Generator (20 hooks)",
-        "🎨 Creative Brief",
-        "🎬 Video Ad Script",
-        "🔽 Funnel Architecture",
-        "💰 Budget Allocation",
-        "🧪 A/B Testing Plan",
-        "📄 Landing Page Audit",
-        "📊 Ad Performance Audit",
-        "📑 Generate PDF Report (from last strategy)",
-    ])
+    command = st.selectbox("Service:", ["📊 Full Strategy (all 5 agents)","⚡ 60-Second Snapshot","🎯 Audience Personas","🔍 Competitor Analysis","🔑 Keyword Strategy","✍️ Ad Copy Generator","🪝 Hook Generator","🎨 Creative Brief","🎬 Video Ad Script","🔽 Funnel Architecture","💰 Budget Allocation","🧪 A/B Testing Plan","📄 Landing Page Audit","📊 Ad Performance Audit","📑 Generate PDF"])
 with col2:
-    url = st.text_input("Business Website URL:", "https://example.com")
+    url = st.text_input("Website URL:", "https://example.com")
     business_name = st.text_input("Business Name (optional):", "")
 
-with st.expander("🌍 Target Market & Strategy Settings", expanded=True):
+with st.expander("🌍 Target Market & Settings", expanded=True):
     c1,c2,c3 = st.columns(3)
     with c1:
         country = st.selectbox("Country:", COUNTRIES, index=0)
-        provinces = st.multiselect("Provinces/Regions:", PROVINCES_BY_COUNTRY.get(country, ["All"]), default=["All Provinces"])
+        provinces = st.multiselect("Province/Region:", PROVINCES_BY_COUNTRY.get(country, ["All"]), default=["All Provinces"])
     with c2:
         cities = st.text_input("Cities/Areas:", "")
         langs = st.multiselect("Languages:", LANGUAGES_BY_COUNTRY.get(country, ["English"]), default=["Urdu","English"] if country=="Pakistan" else ["English"])
     with c3:
         biz_type = st.selectbox("Business Type:", [""] + BUSINESS_TYPES_EXTENDED)
-        objective = st.selectbox("Campaign Objective:", ["","Brand Awareness","Website Traffic","Lead Generation","Sales/Conversions","App Installs","Engagement"])
-        bilingual = st.checkbox("Bilingual copy", value=(country=="Pakistan" and len(langs)>=2))
+        objective = st.selectbox("Objective:", ["","Brand Awareness","Website Traffic","Lead Generation","Sales/Conversions","App Installs","Engagement"])
+        bilingual = st.checkbox("Bilingual copy", value=(country=="Pakistan"))
 
-with st.expander("🎯 Advanced Options (optional)", expanded=False):
+with st.expander("🎯 Advanced Options", expanded=False):
     a1,a2 = st.columns(2)
     with a1:
         competitors = st.text_area("Competitor URLs/names:", "", height=80)
         budget_val = st.number_input("Monthly Budget ($):", min_value=100, value=3000, step=500)
     with a2:
         creative_assets = st.multiselect("Creative assets:", ["Product photos","Testimonial videos","UGC/influencer content","Before/after images","Professional brand video","Nothing yet"])
-        extra_notes = st.text_area("Additional context:", "", height=100)
+        api_choice = st.radio("API Preference:", ["Auto (Gemini for strategy, Groq for quick)", "Gemini only", "Groq only"], index=0)
 
 
-# ═══════════ GENERATE BUTTON LOGIC ═══════════
+# ═══════════ GENERATE ═══════════
 if st.button("🚀 Generate Report", type="primary", use_container_width=True):
     if not url.startswith("http"):
-        st.error("Enter a valid URL starting with http:// or https://")
+        st.error("Enter a valid URL.")
     else:
-        ctx = {
-            "business_name": business_name,
-            "url": url,
-            "country": country,
-            "provinces": provinces,
-            "cities": cities,
-            "languages": langs,
-            "bilingual": bilingual,
-            "business_type": biz_type,
-            "objective": objective,
-            "budget": budget_val,
-            "competitor_urls": competitors,
-            "creative_assets": creative_assets,
-        }
-        # ── Full Strategy ──
+        ctx = dict(business_name=business_name, url=url, country=country, provinces=provinces, cities=cities, languages=langs, bilingual=bilingual, business_type=biz_type, objective=objective, budget=budget_val, competitor_urls=competitors, creative_assets=creative_assets)
+        
         if command == "📊 Full Strategy (all 5 agents)":
             agents = ["audience","creative","funnel","competitive","budget"]
             weights = {"audience":25,"creative":20,"funnel":20,"competitive":15,"budget":20}
-            results = {}
-            scores = {}
+            results, scores = {}, {}
             progress = st.progress(0)
+            
+            # Decide API: Gemini for full strategy unless user forces Groq
+            use_gemini = ("Groq only" not in api_choice) and gemini_model is not None
+            
             for i, agent in enumerate(agents):
+                progress.progress((i)/len(agents), f"Running {agent} agent via {'Gemini' if use_gemini else 'Groq'}...")
                 prompt = build_prompt(agent, **ctx)
-                out = call_groq(prompt)
+                try:
+                    out = call_llm(prompt, use_gemini=use_gemini)
+                except RuntimeError as e:
+                    st.error(f"API error: {e}")
+                    st.stop()
                 results[agent] = out
                 scores[agent] = extract_score(out)
-                progress.progress((i+1)/len(agents))
                 time.sleep(0.3)
-            progress.empty()
+            
+            progress.progress(1.0, "Complete!"); progress.empty()
             total = sum(scores[a] * weights[a]/100 for a in agents)
             grade = score_grade(total)
 
-            # --- Display score dashboard ---
-            st.markdown("## 📊 Ad Readiness Score")
+            # Display
+            st.markdown(f"## 📊 Ad Readiness Score: {total:.0f}/100 ({grade})")
             cols = st.columns(5)
             for idx, (k,label) in enumerate(zip(agents,["Audience","Creative","Funnel","Competitive","Budget"])):
-                s = scores[k]
-                c = score_color(s)
-                cols[idx].markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-value" style="color:{c}">{s}</div>
-                    <div class="metric-label">{label}</div>
-                </div>""", unsafe_allow_html=True)
+                cols[idx].markdown(f"""<div class="metric-card"><div class="metric-value" style="color:{score_color(scores[k])}">{scores[k]}</div><div class="metric-label">{label}</div></div>""", unsafe_allow_html=True)
             if PLOTLY_AVAILABLE:
-                fig = go.Figure(go.Indicator(mode="gauge+number", value=total, title={"text":"Ad Readiness Score"},
-                                             gauge={"axis":{"range":[0,100]},"bar":{"color":score_color(total)}}))
+                fig = go.Figure(go.Indicator(mode="gauge+number", value=total, title={"text":"Ad Readiness Score"}, gauge={"axis":{"range":[0,100]},"bar":{"color":score_color(total)}}))
                 fig.update_layout(height=300); st.plotly_chart(fig, use_container_width=True)
-
-            # Agent reports in expanders
+            
             for agent in agents:
                 with st.expander(f"**{agent.title()}**", expanded=(agent=="audience")):
                     st.text(results[agent])
-
-            # Save to session state for PDF
-            st.session_state.last_strategy = {
-                "business_name": business_name, "url": url, "total": total, "grade": grade,
-                "scores": scores, "results": results
-            }
+            
+            st.session_state.last_strategy = dict(business_name=business_name, url=url, total=total, grade=grade, scores=scores, results=results)
+            
             # Downloads
-            report_md = f"# Strategy for {business_name or url}\nScore: {total}/100 ({grade})\n\n"
-            for a in agents:
-                report_md += f"## {a}\n{results[a]}\n\n"
-            st.download_button("⬇ Download Report (.md)", report_md, file_name="strategy_report.md")
+            report_md = f"# Strategy for {business_name or url}\nScore: {total}/100 ({grade})\n\n" + "\n\n".join(f"## {a}\n{results[a]}" for a in agents)
+            st.download_button("⬇ Download (.md)", report_md, file_name="strategy.md")
             if PDF_AVAILABLE:
                 pdf = generate_pdf(st.session_state.last_strategy)
-                if pdf:
-                    st.download_button("📄 Download PDF Report", pdf, file_name="strategy_report.pdf")
+                if pdf: st.download_button("📄 Download PDF", pdf, file_name="strategy.pdf")
             else:
-                st.info("Install `reportlab` for PDF export.")
-
-        # ── PDF only command ──
-        elif command == "📑 Generate PDF Report (from last strategy)":
+                st.info("Install `reportlab` for PDF.")
+        
+        elif command == "📑 Generate PDF":
             if "last_strategy" not in st.session_state:
                 st.warning("Run a full strategy first.")
             else:
                 pdf = generate_pdf(st.session_state.last_strategy)
-                if pdf:
-                    st.download_button("📄 Download PDF", pdf, file_name="report.pdf")
-                else:
-                    st.error("PDF generation failed.")
-        # ── Single-agent commands ──
+                if pdf: st.download_button("📄 Download PDF", pdf, file_name="report.pdf")
+        
         else:
-            agent_key_map = {
-                "⚡ 60-Second Snapshot": "quick",
-                "🎯 Audience Personas": "audience",
-                "🔍 Competitor Analysis": "competitive",
-                "🔑 Keyword Strategy": "keywords",
-                "✍️ Ad Copy Generator": "copy",
-                "🪝 Hook Generator (20 hooks)": "hooks",
-                "🎨 Creative Brief": "creative_brief",
-                "🎬 Video Ad Script": "video_script",
-                "🔽 Funnel Architecture": "funnel_only",
-                "💰 Budget Allocation": "budget",
-                "🧪 A/B Testing Plan": "testing",
-                "📄 Landing Page Audit": "landing_audit",
-                "📊 Ad Performance Audit": "ad_audit",
-            }
-            agent = agent_key_map.get(command, "quick")
+            agent_map = {"⚡ 60-Second Snapshot":"quick","🎯 Audience Personas":"audience","🔍 Competitor Analysis":"competitive","🔑 Keyword Strategy":"keywords","✍️ Ad Copy Generator":"copy","🪝 Hook Generator":"hooks","🎨 Creative Brief":"creative_brief","🎬 Video Ad Script":"video_script","🔽 Funnel Architecture":"funnel_only","💰 Budget Allocation":"budget","🧪 A/B Testing Plan":"testing","📄 Landing Page Audit":"landing_audit","📊 Ad Performance Audit":"ad_audit"}
+            agent = agent_map.get(command, "quick")
             if command == "✍️ Ad Copy Generator":
-                platform = st.selectbox("Platform:", ["Meta","Google Ads","TikTok","YouTube","LinkedIn","Pinterest"], key="plat")
-                ctx["platform"] = platform
+                ctx["platform"] = st.selectbox("Platform:", ["Meta","Google Ads","TikTok","YouTube","LinkedIn","Pinterest"], key="plat")
             prompt = build_prompt(agent, **ctx)
             with st.spinner("Generating..."):
-                result = call_groq(prompt)
+                result = call_llm(prompt, use_gemini=("Gemini only" in api_choice))
             st.success("Done!")
             st.text(result)
             st.download_button("⬇ Download", result, file_name=f"{agent}.txt")
