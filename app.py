@@ -1,23 +1,21 @@
 """
-AI Ads Strategist – Simple MCQ Qualification · Triple Worker · Dual‑Judge
+AI Ads Strategist – MCQ Qualification (Fixed) · Triple Worker · Dual‑Judge
 ══════════════════════════════════════════════════════════════════════════
-• Fixed 3‑radio‑button qualification after "Generate Strategy"
+• Fixed 3‑radio‑button qualification – no broken reruns
 • 3 parallel workers: Groq Llama 3.3, Gemini 2.5 Flash, DeepSeek V4
 • Judge 1 (Gemini Pro/Flash) synthesises, Judge 2 (DeepSeek) improves
 • 100+ business types, full Pakistan market intelligence
 • Beautiful Plotly charts & clean PDF export
 """
 
-import streamlit as st, re, threading, time, io
+import streamlit as st, re, io, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-# ── API clients ──────────────────────────────────────────
 from groq import Groq
 import google.generativeai as genai
 from openai import OpenAI
 
-# ── Visualisation & PDF (optional) ──────────────────────
 try:
     import plotly.graph_objects as go
     PLOTLY = True
@@ -38,10 +36,6 @@ try:
 except:
     PDF = False
 
-
-# ══════════════════════════════════════════════════════════
-# PAGE CONFIG & STYLE
-# ══════════════════════════════════════════════════════════
 st.set_page_config(page_title="AI Ads Strategist", page_icon="🎯", layout="wide")
 st.markdown("""
 <style>
@@ -58,30 +52,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════
-# API INITIALISATION
-# ══════════════════════════════════════════════════════════
+# ── API clients (cached) ──────────────────────────────────
 @st.cache_resource
 def init_apis():
     clients = {}
     try:
         clients["groq"] = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    except:
-        pass
+    except: pass
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         clients["gemini_flash"] = genai.GenerativeModel("gemini-2.5-flash")
         clients["gemini_pro"] = genai.GenerativeModel("gemini-2.5-pro-exp-03-25")
-    except:
-        pass
+    except: pass
     try:
         clients["deepseek"] = OpenAI(
             api_key=st.secrets["DEEPSEEK_API_KEY"],
             base_url="https://api.deepseek.com/v1"
         )
-    except:
-        pass
+    except: pass
     return clients
 
 apis = init_apis()
@@ -89,9 +77,7 @@ if not any(k in apis for k in ["groq","gemini_flash","deepseek"]):
     st.error("Add at least one API key (GROQ, GEMINI, DEEPSEEK) to Streamlit Secrets.")
     st.stop()
 
-# ══════════════════════════════════════════════════════════
-# DATA
-# ══════════════════════════════════════════════════════════
+# ── Data ──────────────────────────────────────────────────
 BUSINESS_TYPES = [
     "Beauty Products (General)","Hair Oils & Serums","Hair Tonics","Skin Care","Cosmetics","Nail Art",
     "Fragrances","Personal Hygiene","Men's Grooming","Beauty Salon / Spa","Barber Shop",
@@ -103,7 +89,6 @@ BUSINESS_TYPES = [
     "Car Dealership","Auto Repair","E‑commerce (General)","Pet Supplies","Baby Products",
     "SaaS (B2B)","Mobile App","FinTech","Handicrafts","Bookstore",
 ]
-
 COUNTRIES = ["Pakistan","India","United States","United Kingdom","Canada","UAE","Saudi Arabia"]
 PROVINCES_BY_COUNTRY = {
     "Pakistan":["Punjab","Sindh","KPK","Balochistan","Islamabad","Gilgit-Baltistan","AJK","All Provinces"],
@@ -136,9 +121,7 @@ PAKISTAN_INTEL = """
 - Calendar: Ramadan, Eid‑ul‑Fitr, Eid‑ul‑Azha, Aug 14, Wedding season (Oct‑Mar), Black Friday.
 """
 
-# ══════════════════════════════════════════════════════════
-# MCQ QUESTIONS (fixed, simple)
-# ══════════════════════════════════════════════════════════
+# ── MCQ Questions (fixed) ─────────────────────────────────
 MCQ_QUESTIONS = {
     "ad_experience": {
         "question": "What best describes your current ad setup?",
@@ -170,7 +153,6 @@ MCQ_QUESTIONS = {
 }
 
 def format_insights(answers):
-    """Convert MCQ answers into a short insight string for the AI."""
     parts = []
     if answers.get("ad_experience"):
         parts.append(f"Ad experience: {answers['ad_experience']}")
@@ -180,9 +162,7 @@ def format_insights(answers):
         parts.append(f"Biggest challenge: {answers['main_challenge']}")
     return " | ".join(parts) if parts else "No extra insights provided."
 
-# ══════════════════════════════════════════════════════════
-# ENHANCED AGENT PROMPT BUILDER
-# ══════════════════════════════════════════════════════════
+# ── Enhanced Agent Prompt Builder ─────────────────────────
 def build_prompt(agent, ctx, insights=""):
     name = ctx.get('business_name','')
     url = ctx.get('url','')
@@ -195,7 +175,6 @@ def build_prompt(agent, ctx, insights=""):
     budget = ctx.get('budget',3000)
     competitors = ctx.get('competitors','')
     assets = ctx.get('assets',[])
-    platform = ctx.get('platform','Meta')
 
     lang_instruction = f"Create content in {', '.join(langs)}."
     if bilingual and len(langs)>=2:
@@ -237,7 +216,7 @@ OUTPUT STRUCTURE:
 | Pain Point | ... |
 | Digital Home | Platform + Peak Time |
 | Messaging Hook | [Exact hook in required language] |
-| Why It Works | [Psychological/cultural reason] |
+| Why It Works | [Psychological reason] |
 
 ## 📈 Targeting Blueprint (for Meta/Google/TikTok)
 - Exact audience definition, lookalike recommendation, expected CTR/CPM based on market intel.
@@ -246,7 +225,7 @@ OUTPUT STRUCTURE:
         output_format = """
 OUTPUT STRUCTURE:
 ## 🪝 10 Scroll‑Stopping Hooks
-(Label each with category: Pattern Interrupt / Curiosity / Bold Claim / Relatable Pain)
+(Label each with category)
 
 ## 📱 Platform‑Specific Copy
 ### Meta (Facebook/Instagram) – 3 Primary Text Options
@@ -255,8 +234,6 @@ OUTPUT STRUCTURE:
 
 ## 🎬 30‑Second Vertical Video Script (9:16)
 | Time | Visual Scene | Audio/Voiceover | Text Overlay |
-|------|--------------|-----------------|--------------|
-| 0-3s | ... | ... | ... |
 
 ## 🎨 Creative Direction Brief
 - Visual style, color palette, do's/don'ts.
@@ -265,40 +242,31 @@ OUTPUT STRUCTURE:
         output_format = """
 OUTPUT STRUCTURE:
 ## 🔽 Full‑Funnel Architecture
-### TOFU (Awareness) – 40% budget
-- Campaign names, platforms, ad formats, KPIs
-### MOFU (Consideration) – 30% budget
-- Retargeting pools, content types
-### BOFU (Conversion) – 20% budget
-- High‑intent audiences, offer strategy
-### Retargeting Layer – 10% budget
-- Dynamic ads, frequency cap, WhatsApp integration (if Pakistan)
+### TOFU (Awareness) – 40% budget – Campaign names, platforms, KPIs
+### MOFU (Consideration) – 30% budget – Retargeting pools, content types
+### BOFU (Conversion) – 20% budget – High‑intent audiences, offer strategy
+### Retargeting Layer – 10% budget – Dynamic ads, WhatsApp (if Pakistan)
 """
     elif agent == "competitive":
         output_format = """
 OUTPUT STRUCTURE:
-## 🔍 Competitive Landscape
+## 🔍 Competitive Landscape (table)
 | Competitor | Platform Focus | Estimated Spend | Key Hook | Our Advantage |
-|------------|---------------|----------------|----------|---------------|
-| ... | ... | ... | ... | ... |
 
 ## 🥊 Counter‑Positioning Strategy
-- How we beat each competitor on messaging.
+- How we beat each competitor.
 - Unexploited audience gaps.
 """
     elif agent == "budget":
         output_format = """
 OUTPUT STRUCTURE:
-## 💰 Budget Allocation
-| Platform | % Budget | Monthly Amount | Projected CPM | Projected CPC | Expected Impressions |
-|----------|---------|----------------|---------------|---------------|----------------------|
-| ... | ... | ... | ... | ... | ... |
+## 💰 Budget Allocation (table)
+| Platform | % Budget | Monthly | Proj. CPM | Proj. CPC | Est. Impressions |
 
 ## 📈 3‑Month Scaling Plan
-- Month 1: test, Month 2: scale winners, Month 3: expand.
+- Month 1: test, Month 2: scale, Month 3: expand.
 
-## 🧠 Strategist's Honest Assessment
-(Risk and mitigation)
+## 🧠 Strategist's Honest Assessment (risk & mitigation)
 """
 
     return f"""{role}
@@ -310,9 +278,7 @@ OUTPUT STRUCTURE:
 {output_format}
 """
 
-# ══════════════════════════════════════════════════════════
-# LLM WORKERS
-# ══════════════════════════════════════════════════════════
+# ── LLM Workers ───────────────────────────────────────────
 def call_deepseek(prompt, max_tokens=4096):
     resp = apis["deepseek"].chat.completions.create(
         model="deepseek-chat",
@@ -337,25 +303,19 @@ def call_gemini(prompt, model="flash"):
 
 def call_worker(model_name, prompt):
     try:
-        if model_name == "deepseek" and "deepseek" in apis:
-            return call_deepseek(prompt)
-        elif model_name == "groq" and "groq" in apis:
-            return call_groq(prompt)
-        elif model_name == "gemini" and "gemini_flash" in apis:
-            return call_gemini(prompt, "flash")
-        else:
-            return f"[{model_name} unavailable]"
+        if model_name == "deepseek" and "deepseek" in apis: return call_deepseek(prompt)
+        elif model_name == "groq" and "groq" in apis: return call_groq(prompt)
+        elif model_name == "gemini" and "gemini_flash" in apis: return call_gemini(prompt, "flash")
+        else: return f"[{model_name} unavailable]"
     except Exception as e:
         return f"[{model_name} ERROR: {e}]"
 
-# ══════════════════════════════════════════════════════════
-# ENSEMBLE ORCHESTRATION
-# ══════════════════════════════════════════════════════════
+# ── Ensemble orchestration ────────────────────────────────
 def run_ensemble_agents(ctx, insights):
     agents = ["audience","creative","funnel","competitive","budget"]
     all_outs = {a:{} for a in agents}
-    futures = []
     with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = []
         for agent in agents:
             prompt = build_prompt(agent, ctx, insights)
             for model in ["groq","gemini","deepseek"]:
@@ -365,8 +325,8 @@ def run_ensemble_agents(ctx, insights):
                         agent, model, prompt
                     ))
         for future in as_completed(futures):
-            agent, model, result = future.result()
-            all_outs[agent][model] = result
+            a, m, res = future.result()
+            all_outs[a][m] = res
     return all_outs
 
 def judge1_synthesize(all_outs, ctx):
@@ -374,24 +334,19 @@ def judge1_synthesize(all_outs, ctx):
     for agent in ["audience","creative","funnel","competitive","budget"]:
         for model, text in all_outs.get(agent, {}).items():
             flat += f"### {agent} - {model}\n{text}\n\n"
-    prompt = f"""You are the Chief Strategy Officer reviewing three AI strategists' outputs for the same business:
+    prompt = f"""You are the Chief Strategy Officer reviewing outputs from three AI strategists for the same business:
 {flat}
 
 Extract the single strongest element from each. Blend them into ONE superior, client‑ready strategy.
-Use professional formatting with clear headings, bullet points, tables where appropriate.
-Add a top section '💼 Executive Summary' summarising the key recommendation in 3 bullet points.
+Use professional formatting with clear headings, bullet points, and tables.
+Add a top section '💼 Executive Summary' (3 bullet points).
 
 Business context: {ctx.get('business_name','')}, {ctx.get('url','')}, {ctx.get('country','')}, Budget ${ctx.get('budget',3000)}/mo.
 """
-    # Prefer Gemini Pro, else Flash, else Groq
-    if "gemini_pro" in apis:
-        return call_gemini(prompt, "pro")
-    elif "gemini_flash" in apis:
-        return call_gemini(prompt, "flash")
-    elif "groq" in apis:
-        return call_groq(prompt)
-    else:
-        return call_deepseek(prompt) if "deepseek" in apis else "No judge available."
+    if "gemini_pro" in apis: return call_gemini(prompt, "pro")
+    if "gemini_flash" in apis: return call_gemini(prompt, "flash")
+    if "groq" in apis: return call_groq(prompt)
+    return call_deepseek(prompt) if "deepseek" in apis else "No judge available."
 
 def judge2_improve(draft, ctx):
     prompt = f"""You are a meticulous Creative Director & Media Buying expert. Review the following unified ad strategy:
@@ -405,26 +360,19 @@ Do the following:
 3. Improve the Executive Summary to be punchier and more actionable.
 4. Add a final section “🔥 Quick Wins” listing 3 easiest actions the business can take tomorrow with zero extra budget.
 
-Output the **entire revised strategy** incorporating your improvements, keeping original structure.
+Output the **entire revised strategy** incorporating your improvements, keeping the original structure.
 """
-    if "deepseek" in apis:
-        return call_deepseek(prompt)
-    # fallback to Gemini or Groq
-    if "gemini_flash" in apis:
-        return call_gemini(prompt, "flash")
-    if "groq" in apis:
-        return call_groq(prompt)
+    if "deepseek" in apis: return call_deepseek(prompt)
+    if "gemini_flash" in apis: return call_gemini(prompt, "flash")
+    if "groq" in apis: return call_groq(prompt)
     return draft + "\n\n[Judge 2 unavailable – no revision applied]"
 
-# ══════════════════════════════════════════════════════════
-# PDF GENERATOR (clean markdown → ReportLab)
-# ══════════════════════════════════════════════════════════
+# ── PDF Generator ────────────────────────────────────────
 def text_to_flowables(text, style):
     flowables = []
     for block in re.split(r'\n\s*\n', text):
         block = block.strip()
-        if not block:
-            continue
+        if not block: continue
         if all(re.match(r'^\s*[\-\*]\s', l) for l in block.split('\n') if l.strip()):
             items = []
             for line in block.split('\n'):
@@ -432,8 +380,8 @@ def text_to_flowables(text, style):
                 content = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', content)
                 items.append(ListItem(Paragraph(content, style)))
             flowables.append(ListFlowable(items, bulletType='bullet', start='•'))
-            flowables.append(Spacer(1, 6))
-        elif '|' in block and block.count('|') > 2:
+            flowables.append(Spacer(1,6))
+        elif '|' in block and block.count('|')>2:
             lines = block.split('\n')
             table_data = []
             for line in lines:
@@ -455,8 +403,7 @@ def text_to_flowables(text, style):
     return flowables
 
 def generate_pdf(strategy_text, ctx):
-    if not PDF:
-        return None
+    if not PDF: return None
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=0.7*inch, rightMargin=0.7*inch)
     styles = getSampleStyleSheet()
@@ -477,13 +424,9 @@ def generate_pdf(strategy_text, ctx):
     buf.seek(0)
     return buf
 
-
-# ══════════════════════════════════════════════════════════
-# STREAMLIT UI
-# ══════════════════════════════════════════════════════════
+# ── Streamlit UI ──────────────────────────────────────────
 st.markdown('<div class="hero"><h1>🎯 AI Ads Strategist</h1><p>Simple MCQ Qualification · Triple‑Model Ensemble · Dual‑Judge QA</p></div>', unsafe_allow_html=True)
 
-# Business details form
 with st.expander("⚙️ Business Setup", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
@@ -494,7 +437,7 @@ with st.expander("⚙️ Business Setup", expanded=True):
     with col2:
         cities = st.text_input("Cities/Areas", placeholder="e.g., Karachi, Lahore")
         langs = st.multiselect("Ad Languages *", LANGUAGES_BY_COUNTRY.get(country,["English"]), default=["Urdu","English"] if country=="Pakistan" else ["English"])
-        bilingual = st.checkbox("Bilingual copy (mix languages)", value=True if country=="Pakistan" else False)
+        bilingual = st.checkbox("Bilingual copy", value=True if country=="Pakistan" else False)
         business_type = st.selectbox("Business Type", BUSINESS_TYPES)
         objective = st.selectbox("Campaign Objective", ["Brand Awareness","Website Traffic","Lead Generation","Sales/Conversions","App Installs","Engagement"])
         budget = st.number_input("Monthly Budget ($) *", min_value=100, value=3000, step=500)
@@ -509,51 +452,43 @@ with st.expander("🎯 Advanced Settings (optional)"):
             "Professional brand video", "Nothing yet"
         ])
 
-# ── State management ──
+# ── State management ──────────────────────────────────────
 if 'generation_requested' not in st.session_state:
     st.session_state.generation_requested = False
 if 'mcq_answers' not in st.session_state:
     st.session_state.mcq_answers = None
 
-# ── Generate button ──
+# ── Generate Strategy button ──────────────────────────────
 if st.button("🧠 Generate Strategy", type="primary"):
     if not url.startswith("http"):
         st.error("Enter a valid URL starting with http:// or https://")
     else:
-        st.session_state.generation_requested = True
-        # If MCQs not answered yet, we'll show them below
         if st.session_state.mcq_answers is None:
-            st.markdown("---")
-            st.markdown("### 🎯 Let's personalise your strategy")
-            st.markdown("*(Just 3 clicks – no typing needed)*")
-            with st.form("mcq_form"):
-                q1 = st.radio(
-                    MCQ_QUESTIONS["ad_experience"]["question"],
-                    MCQ_QUESTIONS["ad_experience"]["options"],
-                    key="q1"
-                )
-                q2 = st.radio(
-                    MCQ_QUESTIONS["customer_type"]["question"],
-                    MCQ_QUESTIONS["customer_type"]["options"],
-                    key="q2"
-                )
-                q3 = st.radio(
-                    MCQ_QUESTIONS["main_challenge"]["question"],
-                    MCQ_QUESTIONS["main_challenge"]["options"],
-                    key="q3"
-                )
-                submitted = st.form_submit_button("✅ Continue with these answers")
-                if submitted:
-                    st.session_state.mcq_answers = {
-                        "ad_experience": q1,
-                        "customer_type": q2,
-                        "main_challenge": q3
-                    }
-                    st.experimental_rerun()  # will now run the generation
+            st.session_state.generation_requested = True
         else:
-            st.session_state.generation_requested = False  # reset if already answered (shouldn't happen on normal flow)
+            # Already answered, start generation immediately
+            st.session_state.generation_requested = True
+            # Run generation now (we'll handle below)
 
-# ── Run generation if requested and MCQs answered ──
+# ── Show MCQs if generation requested but not yet answered ─
+if st.session_state.generation_requested and st.session_state.mcq_answers is None:
+    st.markdown("---")
+    st.markdown("### 🎯 Let's personalise your strategy")
+    st.caption("Just 3 clicks – no typing needed")
+    with st.form("mcq_form"):
+        q1 = st.radio(MCQ_QUESTIONS["ad_experience"]["question"], MCQ_QUESTIONS["ad_experience"]["options"], key="q1")
+        q2 = st.radio(MCQ_QUESTIONS["customer_type"]["question"], MCQ_QUESTIONS["customer_type"]["options"], key="q2")
+        q3 = st.radio(MCQ_QUESTIONS["main_challenge"]["question"], MCQ_QUESTIONS["main_challenge"]["options"], key="q3")
+        submitted = st.form_submit_button("✅ Continue with these answers")
+        if submitted:
+            st.session_state.mcq_answers = {
+                "ad_experience": q1,
+                "customer_type": q2,
+                "main_challenge": q3
+            }
+            # The form submit causes a natural rerun (no st.rerun needed!)
+
+# ── Run generation if both conditions met ─────────────────
 if st.session_state.generation_requested and st.session_state.mcq_answers is not None:
     insights = format_insights(st.session_state.mcq_answers)
     ctx = {
@@ -576,8 +511,10 @@ if st.session_state.generation_requested and st.session_state.mcq_answers is not
         unified = judge1_synthesize(all_outputs, ctx)
     with st.spinner("🔍 Judge 2 performing quality review..."):
         final_strategy = judge2_improve(unified, ctx)
+
     st.success("✅ Strategy Ready!")
     st.markdown(final_strategy)
+
     if PDF:
         pdf_buf = generate_pdf(final_strategy, ctx)
         if pdf_buf:
@@ -585,7 +522,7 @@ if st.session_state.generation_requested and st.session_state.mcq_answers is not
                                file_name=f"{business_name or 'strategy'}_report.pdf")
     else:
         st.info("Install `reportlab` for PDF export.")
-    # Reset state for next run
+
+    # Reset for next run
     st.session_state.generation_requested = False
-    # Optionally keep MCQs for next run – we'll keep them or clear
-    # st.session_state.mcq_answers = None   # Uncomment to ask again every time
+    # Optionally clear MCQs to ask again next time – keep as is for now
