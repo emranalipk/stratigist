@@ -1,11 +1,10 @@
 """
-AI Ads Strategist – MCQ Qualification (Fixed) · Triple Worker · Dual‑Judge
-══════════════════════════════════════════════════════════════════════════
-• Fixed 3‑radio‑button qualification – no broken reruns
+AI Ads Strategist – Fixed Gemini Pro, Robust Error Handling
+═══════════════════════════════════════════════════════════════
+• Corrected model names, fallback to Flash, try‑except protection
 • 3 parallel workers: Groq Llama 3.3, Gemini 2.5 Flash, DeepSeek V4
 • Judge 1 (Gemini Pro/Flash) synthesises, Judge 2 (DeepSeek) improves
-• 100+ business types, full Pakistan market intelligence
-• Beautiful Plotly charts & clean PDF export
+• Simple MCQ qualification, beautiful PDF, Pakistan market intelligence
 """
 
 import streamlit as st, re, io, time
@@ -36,6 +35,7 @@ try:
 except:
     PDF = False
 
+# ── Page config ───────────────────────────────────────────
 st.set_page_config(page_title="AI Ads Strategist", page_icon="🎯", layout="wide")
 st.markdown("""
 <style>
@@ -43,9 +43,6 @@ st.markdown("""
             padding: 2rem; border-radius: 18px; margin-bottom: 2rem; text-align: center;
             box-shadow: 0 10px 30px rgba(37,99,235,0.3); }
     .hero h1 { font-size: 2.5rem; margin:0; }
-    .metric-card { background: white; border-radius: 14px; padding: 1.4rem;
-                   box-shadow: 0 2px 8px rgba(0,0,0,0.04); border: 1px solid #E2E8F0;
-                   text-align: center; }
     .stRadio > label { font-weight:600; }
     .stButton > button { background: linear-gradient(135deg, #2563EB, #1D4ED8); color: white;
                          border: none; border-radius: 12px; padding: 0.8rem 2rem; font-weight: 600; }
@@ -61,8 +58,10 @@ def init_apis():
     except: pass
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        # Use stable model names
         clients["gemini_flash"] = genai.GenerativeModel("gemini-2.5-flash")
-        clients["gemini_pro"] = genai.GenerativeModel("gemini-2.5-pro-exp-03-25")
+        # Use latest Pro (may not be available on all plans, we'll fallback)
+        clients["gemini_pro"] = genai.GenerativeModel("gemini-2.5-pro-latest")
     except: pass
     try:
         clients["deepseek"] = OpenAI(
@@ -121,7 +120,6 @@ PAKISTAN_INTEL = """
 - Calendar: Ramadan, Eid‑ul‑Fitr, Eid‑ul‑Azha, Aug 14, Wedding season (Oct‑Mar), Black Friday.
 """
 
-# ── MCQ Questions (fixed) ─────────────────────────────────
 MCQ_QUESTIONS = {
     "ad_experience": {
         "question": "What best describes your current ad setup?",
@@ -162,7 +160,7 @@ def format_insights(answers):
         parts.append(f"Biggest challenge: {answers['main_challenge']}")
     return " | ".join(parts) if parts else "No extra insights provided."
 
-# ── Enhanced Agent Prompt Builder ─────────────────────────
+# ── Prompt builder ────────────────────────────────────────
 def build_prompt(agent, ctx, insights=""):
     name = ctx.get('business_name','')
     url = ctx.get('url','')
@@ -228,7 +226,7 @@ OUTPUT STRUCTURE:
 (Label each with category)
 
 ## 📱 Platform‑Specific Copy
-### Meta (Facebook/Instagram) – 3 Primary Text Options
+### Meta – 3 Options
 ### TikTok – 3 Captions with Hashtags
 ### Google Ads – 5 Headlines + 2 Descriptions
 
@@ -242,10 +240,10 @@ OUTPUT STRUCTURE:
         output_format = """
 OUTPUT STRUCTURE:
 ## 🔽 Full‑Funnel Architecture
-### TOFU (Awareness) – 40% budget – Campaign names, platforms, KPIs
-### MOFU (Consideration) – 30% budget – Retargeting pools, content types
-### BOFU (Conversion) – 20% budget – High‑intent audiences, offer strategy
-### Retargeting Layer – 10% budget – Dynamic ads, WhatsApp (if Pakistan)
+### TOFU – 40% budget – Campaigns, platforms, KPIs
+### MOFU – 30% budget – Retargeting pools, content
+### BOFU – 20% budget – High‑intent audiences, offers
+### Retargeting – 10% budget – Dynamic ads, WhatsApp (if Pakistan)
 """
     elif agent == "competitive":
         output_format = """
@@ -255,7 +253,7 @@ OUTPUT STRUCTURE:
 
 ## 🥊 Counter‑Positioning Strategy
 - How we beat each competitor.
-- Unexploited audience gaps.
+- Unexploited gaps.
 """
     elif agent == "budget":
         output_format = """
@@ -296,10 +294,24 @@ def call_groq(prompt, max_tokens=4096):
     return resp.choices[0].message.content
 
 def call_gemini(prompt, model="flash"):
-    m = apis["gemini_flash"] if model=="flash" else apis.get("gemini_pro")
-    if not m: return "[Gemini Pro not available]"
-    resp = m.generate_content(prompt)
-    return resp.text
+    """Call Gemini Flash by default, attempt Pro if requested and fallback to Flash."""
+    if model == "pro":
+        if "gemini_pro" in apis:
+            try:
+                resp = apis["gemini_pro"].generate_content(prompt)
+                return resp.text
+            except Exception as e:
+                st.warning(f"Gemini Pro failed ({e}), falling back to Flash.")
+                # fallback
+        # else fallback to flash
+    m = apis.get("gemini_flash")
+    if m:
+        try:
+            resp = m.generate_content(prompt)
+            return resp.text
+        except Exception as e:
+            return f"[Gemini Flash ERROR: {e}]"
+    return "[Gemini unavailable]"
 
 def call_worker(model_name, prompt):
     try:
@@ -343,10 +355,19 @@ Add a top section '💼 Executive Summary' (3 bullet points).
 
 Business context: {ctx.get('business_name','')}, {ctx.get('url','')}, {ctx.get('country','')}, Budget ${ctx.get('budget',3000)}/mo.
 """
-    if "gemini_pro" in apis: return call_gemini(prompt, "pro")
-    if "gemini_flash" in apis: return call_gemini(prompt, "flash")
-    if "groq" in apis: return call_groq(prompt)
-    return call_deepseek(prompt) if "deepseek" in apis else "No judge available."
+    # Prefer Gemini Pro, fallback to Flash, then Groq
+    if "gemini_pro" in apis:
+        try:
+            return call_gemini(prompt, "pro")
+        except Exception:
+            pass
+    if "gemini_flash" in apis:
+        return call_gemini(prompt, "flash")
+    if "groq" in apis:
+        return call_groq(prompt)
+    if "deepseek" in apis:
+        return call_deepseek(prompt)
+    return "No judge available."
 
 def judge2_improve(draft, ctx):
     prompt = f"""You are a meticulous Creative Director & Media Buying expert. Review the following unified ad strategy:
@@ -362,9 +383,16 @@ Do the following:
 
 Output the **entire revised strategy** incorporating your improvements, keeping the original structure.
 """
-    if "deepseek" in apis: return call_deepseek(prompt)
-    if "gemini_flash" in apis: return call_gemini(prompt, "flash")
-    if "groq" in apis: return call_groq(prompt)
+    if "deepseek" in apis:
+        try:
+            return call_deepseek(prompt)
+        except Exception:
+            pass
+    # fallback
+    if "gemini_flash" in apis:
+        return call_gemini(prompt, "flash")
+    if "groq" in apis:
+        return call_groq(prompt)
     return draft + "\n\n[Judge 2 unavailable – no revision applied]"
 
 # ── PDF Generator ────────────────────────────────────────
@@ -452,13 +480,11 @@ with st.expander("🎯 Advanced Settings (optional)"):
             "Professional brand video", "Nothing yet"
         ])
 
-# ── State management ──────────────────────────────────────
 if 'generation_requested' not in st.session_state:
     st.session_state.generation_requested = False
 if 'mcq_answers' not in st.session_state:
     st.session_state.mcq_answers = None
 
-# ── Generate Strategy button ──────────────────────────────
 if st.button("🧠 Generate Strategy", type="primary"):
     if not url.startswith("http"):
         st.error("Enter a valid URL starting with http:// or https://")
@@ -466,11 +492,8 @@ if st.button("🧠 Generate Strategy", type="primary"):
         if st.session_state.mcq_answers is None:
             st.session_state.generation_requested = True
         else:
-            # Already answered, start generation immediately
             st.session_state.generation_requested = True
-            # Run generation now (we'll handle below)
 
-# ── Show MCQs if generation requested but not yet answered ─
 if st.session_state.generation_requested and st.session_state.mcq_answers is None:
     st.markdown("---")
     st.markdown("### 🎯 Let's personalise your strategy")
@@ -486,9 +509,7 @@ if st.session_state.generation_requested and st.session_state.mcq_answers is Non
                 "customer_type": q2,
                 "main_challenge": q3
             }
-            # The form submit causes a natural rerun (no st.rerun needed!)
 
-# ── Run generation if both conditions met ─────────────────
 if st.session_state.generation_requested and st.session_state.mcq_answers is not None:
     insights = format_insights(st.session_state.mcq_answers)
     ctx = {
@@ -523,6 +544,4 @@ if st.session_state.generation_requested and st.session_state.mcq_answers is not
     else:
         st.info("Install `reportlab` for PDF export.")
 
-    # Reset for next run
     st.session_state.generation_requested = False
-    # Optionally clear MCQs to ask again next time – keep as is for now
